@@ -1,0 +1,12 @@
+{
+  "short_name": "領航員",
+  "name": "旅遊領航員 AI",
+  "icons": [
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512" }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#F2E9E4",
+  "background_color": "#F2E9E4"
+}
