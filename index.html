@@ -11,6 +11,7 @@
     <meta name="apple-mobile-web-app-title" content="旅遊領航員">
     <link rel="apple-touch-icon" href="icon-192.png">
     
+    <!-- 載入核心庫 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -28,9 +29,9 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // --- 您可以在此處填入您的 API Key 或使用設定按鈕輸入 ---
-        const HARDCODED_API_KEY = ""; 
-        // -----------------------------------------------------
+        // --- 您可以在此處填入您的 API Key ---
+        const HARDCODED_API_KEY = "AIzaSyARtktb3I2RORL-3-2XDmZwoaZf0GYnIug"; 
+        // ------------------------------------
 
         const Icon = ({ name, className = "w-6 h-6" }) => {
             useEffect(() => {
@@ -55,15 +56,15 @@
                 setShowSettings(false);
             };
 
-            // 強力解析器：從 AI 的任何廢話中提取 JSON
-            const robustParse = (text) => {
+            // 採用純文字過濾法，避開所有 JSON 設定報錯
+            const parseData = (text) => {
                 try {
                     const start = text.indexOf('{');
                     const end = text.lastIndexOf('}');
-                    if (start === -1 || end === -1) throw new Error("無效資料格式");
+                    if (start === -1 || end === -1) throw new Error();
                     return JSON.parse(text.substring(start, end + 1));
                 } catch (e) {
-                    throw new Error("AI 回傳內容無法解析，請再拍一次。");
+                    throw new Error("影像內容較複雜，請再試一次或確保光線充足。");
                 }
             };
 
@@ -74,13 +75,13 @@
                 setStatus('processing');
                 setDebugMsg("");
 
-                // 採用最初在 Canvas 運作成功的版本與模型名稱
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${currentKey}`;
+                // 鎖定全球最穩定端點與模型：v1 + gemini-1.5-flash
+                const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
                 
                 const prompt = `請分析此圖內容。
-                1. 菜單：翻譯品名與價格（數字）。
-                2. 商品：提供品牌、名稱、建議售價、優缺點、社群摘要。
-                請「僅」回傳一個 JSON 物件，範例：{"type":"menu","title":"名稱","sections":[{"category":"類別","items":[{"name":"品","price":"$10"}]}]} 或 {"type":"product","brand":"品牌","name":"名稱","userFeedback":{"pros":[],"cons":[]},"marketReview":"摘要"}`;
+                1. 菜單：翻譯品名與阿拉伯數字價格。
+                2. 商品：提供品牌、名稱、建議售價、優點、缺點、社群摘要。
+                請僅回傳 JSON 物件，格式為: {"type":"menu","title":"名稱","sections":[{"category":"類別","items":[{"name":"品名","price":"數字"}]}]} 或 {"type":"product","brand":"品牌","name":"名稱","userFeedback":{"pros":[],"cons":[]},"marketReview":"摘要"}`;
 
                 try {
                     const response = await fetch(url, {
@@ -92,10 +93,10 @@
                     });
 
                     const resJson = await response.json();
-                    if (!response.ok) throw new Error(resJson.error?.message || "連線異常");
+                    if (!response.ok) throw new Error(resJson.error?.message || "API 連線失敗");
 
                     const rawText = resJson.candidates[0].content.parts[0].text;
-                    setData(robustParse(rawText));
+                    setData(parseData(rawText));
                     setStatus('result');
                 } catch (error) {
                     setDebugMsg(error.message);
@@ -123,7 +124,7 @@
                         <button onClick={() => setShowSettings(true)} className="bg-white/40 p-2.5 rounded-2xl border border-white shadow-sm active:scale-90 transition-transform">
                             <Icon name="settings" className="w-5 h-5 text-[#9A8C98]" />
                         </button>
-                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase shadow-sm">
+                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase">
                             Travel Pilot AI
                         </div>
                     </header>
@@ -163,7 +164,7 @@
                                 </div>
                                 
                                 {data.type === 'menu' ? (
-                                    <div className="space-y-6">
+                                    <div className="space-y-6 text-[#4A4E69]">
                                         <h2 className="text-2xl font-black text-center">{data.title}</h2>
                                         {data.sections?.map((s, i) => (
                                             <div key={i} className="space-y-4">
@@ -177,17 +178,19 @@
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="space-y-6 text-center">
-                                        <p className="text-[10px] font-bold text-[#C9ADA7] tracking-widest uppercase">{data.brand}</p>
-                                        <h2 className="text-2xl font-black leading-tight text-[#4A4E69]">{data.name}</h2>
+                                    <div className="space-y-6 text-center text-[#4A4E69]">
+                                        <div>
+                                            <p className="text-[10px] font-bold text-[#C9ADA7] tracking-widest uppercase">{data.brand}</p>
+                                            <h2 className="text-2xl font-black leading-tight">{data.name}</h2>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-3 text-left">
                                             <div className="bg-[#F2E9E4]/40 p-4 rounded-2xl"><Icon name="thumbs-up" className="w-4 h-4 text-[#C9ADA7] mb-2" /><ul className="text-[10px] space-y-1 font-medium">{data.userFeedback?.pros?.map((p, k) => <li key={k}>• {p}</li>)}</ul></div>
                                             <div className="bg-[#9A8C98]/10 p-4 rounded-2xl"><Icon name="alert-circle" className="w-4 h-4 text-[#9A8C98] mb-2" /><ul className="text-[10px] space-y-1 font-medium">{data.userFeedback?.cons?.map((c, l) => <li key={l}>• {c}</li>)}</ul></div>
                                         </div>
-                                        <div className="p-6 rounded-[2rem] border-2 border-[#F2E9E4] text-sm italic font-medium shadow-sm">「{data.marketReview}」</div>
+                                        <div className="p-6 rounded-[2rem] border-2 border-[#F2E9E4] text-sm italic font-medium">「{data.marketReview}」</div>
                                     </div>
                                 )}
-                                <button onClick={resetApp} className="w-full mt-10 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg">重新出發</button>
+                                <button onClick={resetApp} className="w-full mt-10 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">重新出發</button>
                             </div>
                         )}
 
@@ -195,10 +198,10 @@
                             <div className="bg-white p-10 rounded-[2.5rem] text-center space-y-6 shadow-xl border-red-50 max-w-xs animate-in zoom-in">
                                 <Icon name="frown" className="w-12 h-12 text-[#9A8C98] mx-auto" />
                                 <div className="space-y-2 text-[#4A4E69]">
-                                    <p className="text-sm font-bold">連線發生錯誤</p>
+                                    <p className="text-sm font-bold text-red-400">連線異常</p>
                                     <p className="text-[10px] opacity-70 leading-relaxed break-words font-mono">{debugMsg}</p>
                                 </div>
-                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md">檢查或更新 API Key</button>
+                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md">更新或檢查 API Key</button>
                             </div>
                         )}
                     </main>
@@ -209,7 +212,7 @@
                                 <Icon name="key" className="w-10 h-10 text-[#C9ADA7] mx-auto" />
                                 <div className="space-y-2">
                                     <h3 className="font-bold text-[#4A4E69]">設定導航密鑰</h3>
-                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請貼上您新申請的 Google API Key<br/>(密鑰將儲存於此設備)</p>
+                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請至 Google AI Studio 申請新密鑰<br/>(舊密鑰似乎已失效)</p>
                                 </div>
                                 <input 
                                     type="password" 
