@@ -11,14 +11,16 @@
     <meta name="apple-mobile-web-app-title" content="旅遊領航員">
     <link rel="apple-touch-icon" href="icon-192.png">
     
-    <script src="[https://unpkg.com/react@18/umd/react.production.min.js](https://unpkg.com/react@18/umd/react.production.min.js)"></script>
-    <script src="[https://unpkg.com/react-dom@18/umd/react-dom.production.min.js](https://unpkg.com/react-dom@18/umd/react-dom.production.min.js)"></script>
-    <script src="[https://unpkg.com/@babel/standalone/babel.min.js](https://unpkg.com/@babel/standalone/babel.min.js)"></script>
-    <script src="[https://cdn.tailwindcss.com](https://cdn.tailwindcss.com)"></script>
-    <script src="[https://unpkg.com/lucide@latest](https://unpkg.com/lucide@latest)"></script>
+    <!-- 修正後的 CDN 連結 (移除錯誤的中括號) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
 
     <style>
-        @import url('[https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap](https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap)');
+        /* 修正後的字體連結 */
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
         body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
         .glass-effect { background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(10px); }
     </style>
@@ -49,7 +51,6 @@
             const [errorMessage, setErrorMessage] = useState("");
             const fileInputRef = useRef(null);
 
-            // 更新 API Key 儲存邏輯
             const saveApiKey = (key) => {
                 const cleanKey = key.trim();
                 setApiKey(cleanKey);
@@ -119,8 +120,6 @@
                     });
                     
                     let content = result.candidates[0].content.parts[0].text;
-                    
-                    // 清洗內容：防止 AI 回傳包含 Markdown 的 JSON
                     content = content.replace(/```json/g, '').replace(/```/g, '').trim();
                     
                     setData(JSON.parse(content));
@@ -136,12 +135,11 @@
 
             return (
                 <div className="min-h-screen bg-[#F2E9E4] text-[#4A4E69] pb-12 transition-all">
-                    {/* Header */}
-                    <header className="p-6 flex justify-between items-center">
+                    <header className="p-6 flex justify-end items-center">
                         <button onClick={() => setShowSettings(true)} className="bg-white/40 p-2.5 rounded-2xl border border-white shadow-sm active:scale-90 transition-transform">
                             <Icon name="settings" className="w-5 h-5 text-[#9A8C98]" />
                         </button>
-                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase shadow-sm">
+                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase shadow-sm ml-4">
                             Travel Pilot AI
                         </div>
                     </header>
@@ -167,8 +165,8 @@
                         )}
 
                         {status === 'processing' && (
-                            <div className="flex flex-col items-center space-y-6 animate-pulse">
-                                <Icon name="refresh-cw" className="w-12 h-12 animate-spin text-[#C9ADA7]" />
+                            <div className="flex flex-col items-center space-y-6 animate-pulse text-[#9A8C98]">
+                                <Icon name="refresh-cw" className="w-10 h-10 animate-spin text-[#C9ADA7]" />
                                 <p className="text-sm font-bold tracking-[0.3em] uppercase">正在導航搜尋中...</p>
                             </div>
                         )}
@@ -177,7 +175,8 @@
                             <div className="w-full max-w-md animate-in slide-in-from-bottom-8 duration-500 bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-white/50 px-8 pb-10">
                                 <div className="relative h-44 -mx-8 mb-8 overflow-hidden">
                                     <img src={image} className="w-full h-full object-cover opacity-90" />
-                                    <button onClick={resetApp} className="absolute top-4 right-4 bg-white/40 p-2 rounded-full shadow-sm"><Icon name="x" className="w-4 h-4 text-white" /></button>
+                                    <div className="absolute inset-0 bg-gradient-to-t from-white via-transparent to-transparent"></div>
+                                    <button onClick={resetApp} className="absolute top-4 right-4 bg-white/40 backdrop-blur-md text-[#4A4E69] p-2 rounded-full shadow-sm"><Icon name="x" className="w-4 h-4 text-white" /></button>
                                 </div>
                                 
                                 {data.type === 'menu' ? (
