@@ -59,14 +59,17 @@
                 setShowSettings(false);
             };
 
-            // 強力解析：從 AI 文字中抓取資料物件
+            // 最終穩定解析器：從 AI 文字中強力抓取資料物件
             const extractJson = (text) => {
                 try {
-                    const match = text.match(/\{[\s\S]*\}/);
+                    // 清除 Markdown 標籤與首尾空白
+                    const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+                    const match = cleaned.match(/\{[\s\S]*\}/);
                     if (!match) throw new Error();
                     return JSON.parse(match[0]);
                 } catch (e) {
-                    throw new Error("影像解讀成功，但資料格式不符。");
+                    console.error("AI 原文回傳:", text);
+                    throw new Error("影像解讀成功，但資料格式轉換失敗，請再拍一次。");
                 }
             };
 
@@ -79,12 +82,12 @@
                 setStatus('processing');
                 setErrorMsg("");
 
-                // 採用最通用的 v1beta 端點與穩定模型
+                // 修正：使用 v1beta 與標準模型名稱，移除所有可能報錯的 config
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
                 
-                const prompt = `分析此圖內容。請僅回傳 JSON 物件，格式範例：
-                {"type":"menu", "title":"名稱", "sections":[{"category":"類別", "items":[{"name":"品名","price":"$10"}]}]} 
-                或 {"type":"product", "brand":"品牌", "name":"名稱", "userFeedback":{"pros":[],"cons":[]}, "marketReview":"摘要"}`;
+                const prompt = `分析此圖內容。請僅回傳 JSON 物件。
+                1. 菜單：翻譯品名與價格（數字）。格式範例：{"type":"menu", "title":"名稱", "sections":[{"category":"類別", "items":[{"name":"品名","price":"$10"}]}]}
+                2. 商品：提供品牌、名稱、售價、優點、缺點、社群摘要。格式範例：{"type":"product", "brand":"品牌", "name":"名稱", "userFeedback":{"pros":[],"cons":[]}, "marketReview":"摘要"}`;
 
                 try {
                     const response = await fetch(url, {
@@ -92,11 +95,16 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64 } }] }]
+                            // 不再傳送 generationConfig，避開 Unknown name 報錯
                         })
                     });
 
                     const resJson = await response.json();
-                    if (!response.ok) throw new Error(resJson.error?.message || "連線異常");
+                    if (!response.ok) {
+                        const msg = resJson.error?.message || "連線異常";
+                        if (msg.includes("models/")) throw new Error("此 API 金鑰暫時無法訪問該模型，請確認地區支援。");
+                        throw new Error(msg);
+                    }
 
                     const rawText = resJson.candidates[0].content.parts[0].text;
                     setData(extractJson(rawText));
@@ -153,7 +161,6 @@
                                         {apiKey ? "啟動相機辨識" : "請點此設定金鑰"}
                                     </div>
                                 </div>
-                                {!apiKey && <p className="text-[10px] text-[#C9ADA7] font-bold animate-bounce">需設定 API Key 才能開啟辨識功能</p>}
                             </div>
                         )}
 
@@ -205,10 +212,12 @@
                             <div className="bg-white p-10 rounded-[2.5rem] text-center space-y-6 shadow-xl border border-red-50 max-w-xs animate-in zoom-in">
                                 <Icon name="frown" className="w-12 h-12 text-[#9A8C98] mx-auto" />
                                 <div className="space-y-2 text-[#4A4E69]">
-                                    <p className="text-sm font-bold text-red-400">連線異常</p>
-                                    <p className="text-[10px] opacity-70 leading-relaxed break-words font-mono">{errorMsg}</p>
+                                    <p className="text-sm font-bold text-red-400">重試建議</p>
+                                    <p className="text-[10px] opacity-70 leading-relaxed break-words font-mono">
+                                        錯誤資訊：{errorMsg}
+                                    </p>
                                 </div>
-                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95">檢查金鑰設定</button>
+                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95">檢查或更換 API Key</button>
                             </div>
                         )}
                     </main>
@@ -219,8 +228,8 @@
                             <div className="bg-white w-full max-w-xs p-8 rounded-[2.5rem] shadow-2xl space-y-6 text-center">
                                 <Icon name="key" className="w-10 h-10 text-[#C9ADA7] mx-auto" />
                                 <div className="space-y-2">
-                                    <h3 className="font-bold text-[#4A4E69]">設定導航金鑰</h3>
-                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請至 Google AI Studio 申請密鑰<br/>密鑰會加密儲存於您的瀏覽器中</p>
+                                    <h3 className="font-bold text-[#4A4E69]">設定導航密鑰</h3>
+                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請至 Google AI Studio 申請密鑰<br/>密鑰會安全地儲存於您的瀏覽器中</p>
                                 </div>
                                 <input 
                                     type="password" 
