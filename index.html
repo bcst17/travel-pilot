@@ -64,8 +64,8 @@
                     throw new Error('尚未設定 API Key');
                 }
                 
-                // 修正：將 v1beta 改為 v1，這是 gemini-1.5-flash 最穩定的生產端點
-                const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
+                // 修正：重新使用 v1beta，因為只有此版本穩定支援 responseMimeType: "application/json"
+                const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
                 
                 try {
                     const response = await fetch(endpoint, {
@@ -77,8 +77,8 @@
                     const resultData = await response.json();
 
                     if (!response.ok) {
-                        console.error('API Error Response:', resultData);
-                        throw new Error(resultData.error?.message || `API Error ${response.status}`);
+                        console.error('API Error Details:', resultData);
+                        throw new Error(resultData.error?.message || `連線異常 (${response.status})`);
                     }
                     
                     return resultData;
@@ -123,13 +123,13 @@
                     });
                     
                     let content = result.candidates[0].content.parts[0].text;
-                    // 清理 Markdown JSON 標籤
+                    // 清理可能的 Markdown 標籤以增加解析穩定性
                     content = content.replace(/```json/g, '').replace(/```/g, '').trim();
                     
                     setData(JSON.parse(content));
                     setStatus('result');
                 } catch (error) {
-                    console.error('Process Error:', error);
+                    console.error('Final Parsing Error:', error);
                     setErrorMessage(error.message);
                     setStatus('error');
                 }
@@ -215,7 +215,7 @@
                         )}
 
                         {status === 'error' && (
-                            <div className="bg-white p-10 rounded-[2.5rem] text-center space-y-6 shadow-xl border border-red-50 max-w-xs animate-in zoom-in">
+                            <div className="bg-white p-10 rounded-[2.5rem] text-center space-y-6 shadow-xl border border-red-50 max-w-xs animate-in zoom-in text-red-400">
                                 <Icon name="frown" className="w-12 h-12 text-[#9A8C98] mx-auto" />
                                 <div className="space-y-2">
                                     <p className="text-sm font-bold text-[#4A4E69]">連線異常</p>
