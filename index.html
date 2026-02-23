@@ -20,7 +20,6 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
         body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
-        .glass-effect { background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(10px); }
     </style>
 </head>
 <body class="bg-[#F2E9E4]">
@@ -49,6 +48,23 @@
             const [errorMessage, setErrorMessage] = useState("");
             const fileInputRef = useRef(null);
 
+            // 前端解析函數：從文字中強力提取 JSON
+            const extractJsonFromText = (text) => {
+                try {
+                    // 1. 嘗試尋找標記之間的 JSON
+                    const regex = /\{[\s\S]*\}/;
+                    const match = text.match(regex);
+                    if (match) {
+                        return JSON.parse(match[0]);
+                    }
+                    // 2. 失敗則直接嘗試解析全文
+                    return JSON.parse(text);
+                } catch (e) {
+                    console.error("JSON 解析失敗，原始文字：", text);
+                    throw new Error("無法將 AI 的回應轉換為格式化資料，請重試一次。");
+                }
+            };
+
             const saveApiKey = (key) => {
                 const cleanKey = key.trim();
                 setApiKey(cleanKey);
@@ -56,39 +72,27 @@
                 setShowSettings(false);
             };
 
-            const callGemini = async (payload, retries = 3, delay = 1000) => {
-                const currentKey = HARDCODED_API_KEY && HARDCODED_API_KEY !== "請貼上您新申請的API_KEY" ? HARDCODED_API_KEY : apiKey;
-                
+            const callGemini = async (payload) => {
+                const currentKey = HARDCODED_API_KEY || apiKey;
                 if (!currentKey) {
                     setShowSettings(true);
                     throw new Error('尚未設定 API Key');
                 }
                 
-                // 修正：重新使用 v1beta，因為只有此版本穩定支援 responseMimeType: "application/json"
-                const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
+                // 使用最穩定的 v1 端點，並移除不穩定的參數
+                const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
                 
-                try {
-                    const response = await fetch(endpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    
-                    const resultData = await response.json();
-
-                    if (!response.ok) {
-                        console.error('API Error Details:', resultData);
-                        throw new Error(resultData.error?.message || `連線異常 (${response.status})`);
-                    }
-                    
-                    return resultData;
-                } catch (error) {
-                    if (retries > 0 && !error.message.includes('key') && !error.message.includes('403')) {
-                        await new Promise(res => setTimeout(res, delay));
-                        return callGemini(payload, retries - 1, delay * 2);
-                    }
-                    throw error;
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const resultData = await response.json();
+                if (!response.ok) {
+                    throw new Error(resultData.error?.message || `API 錯誤 (${response.status})`);
                 }
+                return resultData;
             };
 
             const handleImageUpload = (e) => {
@@ -108,28 +112,23 @@
                 setErrorMessage("");
                 
                 const prompt = `
-                    分析此圖內容。
-                    1. 若判斷為菜單，請翻譯圖中所有文字。條列化品名與價格（轉為阿拉伯數字），不加多餘評論。
-                    2. 若判斷為商品外觀，請提供品牌、全名、建議售價區間、社群優缺點摘要、以及一句話總結。
-                    請「嚴格」僅以 JSON 格式回傳內容，格式必須為: {"type": "menu"|"product", ...}
+                    分析此圖。請在回覆中「僅」回傳一個 JSON 物件，不要有其他說明文字。
+                    1. 若為菜單，請翻譯現有文字，價格轉阿拉伯數字。格式：{"type":"menu", "title":"標題", "sections":[{"category":"類別", "items":[{"name":"品名","price":"數字"}]}], "summary":"總結"}
+                    2. 若為商品，提供品牌、名、售價、優缺點、社群評價。格式：{"type":"product", "name":"名", "brand":"品牌", "userFeedback":{"pros":[],"cons":[]}, "marketReview":"摘要"}
                 `;
 
                 try {
                     const result = await callGemini({
-                        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64 } }] }],
-                        generationConfig: { 
-                            responseMimeType: "application/json" 
-                        }
+                        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64 } }] }]
+                        // 這裡完全移除 generationConfig 參數，以確保最大相容性
                     });
                     
-                    let content = result.candidates[0].content.parts[0].text;
-                    // 清理可能的 Markdown 標籤以增加解析穩定性
-                    content = content.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const rawText = result.candidates[0].content.parts[0].text;
+                    const parsedData = extractJsonFromText(rawText);
                     
-                    setData(JSON.parse(content));
+                    setData(parsedData);
                     setStatus('result');
                 } catch (error) {
-                    console.error('Final Parsing Error:', error);
                     setErrorMessage(error.message);
                     setStatus('error');
                 }
@@ -171,7 +170,7 @@
                         {status === 'processing' && (
                             <div className="flex flex-col items-center space-y-6 animate-pulse text-[#9A8C98]">
                                 <Icon name="refresh-cw" className="w-10 h-10 animate-spin text-[#C9ADA7]" />
-                                <p className="text-sm font-bold tracking-[0.3em] uppercase font-bold">正在解讀影像中...</p>
+                                <p className="text-sm font-bold tracking-[0.3em] uppercase">正在解讀影像中...</p>
                             </div>
                         )}
 
@@ -179,7 +178,6 @@
                             <div className="w-full max-w-md animate-in slide-in-from-bottom-8 duration-500 bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-white/50 px-8 pb-10">
                                 <div className="relative h-44 -mx-8 mb-8 overflow-hidden">
                                     <img src={image} className="w-full h-full object-cover opacity-90" />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-white via-transparent to-transparent"></div>
                                     <button onClick={resetApp} className="absolute top-4 right-4 bg-white/40 backdrop-blur-md text-[#4A4E69] p-2 rounded-full shadow-sm"><Icon name="x" className="w-4 h-4 text-white" /></button>
                                 </div>
                                 
@@ -218,12 +216,12 @@
                             <div className="bg-white p-10 rounded-[2.5rem] text-center space-y-6 shadow-xl border border-red-50 max-w-xs animate-in zoom-in text-red-400">
                                 <Icon name="frown" className="w-12 h-12 text-[#9A8C98] mx-auto" />
                                 <div className="space-y-2">
-                                    <p className="text-sm font-bold text-[#4A4E69]">連線異常</p>
+                                    <p className="text-sm font-bold text-[#4A4E69]">辨識出現一點狀況</p>
                                     <p className="text-[11px] text-[#9A8C98] leading-relaxed break-all font-mono">
-                                        {errorMessage || "伺服器無回應，請檢查金鑰或網路環境。"}
+                                        {errorMessage}
                                     </p>
                                 </div>
-                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95 uppercase text-xs tracking-widest">重新檢查設定</button>
+                                <button onClick={resetApp} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95 uppercase text-xs tracking-widest">重新嘗試</button>
                             </div>
                         )}
                     </main>
@@ -234,12 +232,12 @@
                                 <Icon name="key" className="w-10 h-10 text-[#C9ADA7] mx-auto" />
                                 <div className="space-y-2">
                                     <h3 className="font-bold text-[#4A4E69]">設定導航金鑰</h3>
-                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請輸入您的 Google Gemini API Key<br/>(將優先使用程式內預設值)</p>
+                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請輸入您的 Google Gemini API Key<br/>(目前將優先讀取程式內金鑰)</p>
                                 </div>
                                 <input 
                                     type="password" 
-                                    defaultValue={HARDCODED_API_KEY}
-                                    placeholder="貼上新 API Key..."
+                                    defaultValue={apiKey}
+                                    placeholder="貼上 API Key..."
                                     className="w-full bg-[#F2E9E4] border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-[#C9ADA7] outline-none shadow-inner"
                                     onBlur={(e) => saveApiKey(e.target.value)}
                                 />
