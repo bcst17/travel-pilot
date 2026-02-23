@@ -3,24 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>旅遊領航員</title>
+    <title>旅遊領航員 AI</title>
     
-    <link rel="manifest" href="manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="旅遊領航員">
-    <link rel="apple-touch-icon" href="icon-192.png">
-    
-    <!-- 載入核心庫 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
         body { font-family: 'Noto Sans TC', sans-serif; -webkit-tap-highlight-color: transparent; }
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body class="bg-[#F2E9E4]">
@@ -29,23 +24,26 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // --- 安全建議：請保持此處為空，部署後在網頁左上角「小齒輪」輸入金鑰 ---
-        // 若您的 GitHub 是私有的 (Private)，才建議填入此處
-        const HARDCODED_API_KEY = ""; 
-        // -----------------------------------------------------------
-
+        // 圖標組件優化：確保在 React 渲染後執行
         const Icon = ({ name, className = "w-6 h-6" }) => {
+            const iconRef = useRef(null);
             useEffect(() => {
-                if (window.lucide) window.lucide.createIcons();
-            }, [name]);
-            return <i data-lucide={name} className={className}></i>;
+                if (window.lucide) {
+                    window.lucide.createIcons({
+                        attrs: { class: className },
+                        name: name
+                    });
+                }
+            }, [name, className]);
+            return <i data-lucide={name} ref={iconRef} className={className}></i>;
         };
 
         function App() {
             const [image, setImage] = useState(null);
+            const [mimeType, setMimeType] = useState("image/png");
             const [status, setStatus] = useState('idle');
             const [data, setData] = useState(null);
-            const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || HARDCODED_API_KEY || "");
+            const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || "");
             const [showSettings, setShowSettings] = useState(false);
             const [debugMsg, setDebugMsg] = useState("");
             const fileInputRef = useRef(null);
@@ -57,51 +55,42 @@
                 setShowSettings(false);
             };
 
-            // 最終穩定解析器：無視所有 Markdown 標籤與 AI 廢話
             const robustParse = (text) => {
                 try {
-                    // 使用正規表達式抓取第一個 { 和最後一個 } 之間的內容
                     const jsonMatch = text.match(/\{[\s\S]*\}/);
-                    if (!jsonMatch) throw new Error("找不到資料格式");
+                    if (!jsonMatch) throw new Error("API 未回傳標準 JSON 格式");
                     return JSON.parse(jsonMatch[0]);
                 } catch (e) {
-                    console.error("原始回傳內容：", text);
-                    throw new Error("影像解析成功，但轉換資料時出錯，請再試一次。");
+                    throw new Error("解析失敗：AI 回傳格式不正確，請再試一次。");
                 }
             };
 
-            const callGemini = async (base64) => {
-                const currentKey = apiKey || HARDCODED_API_KEY;
-                if (!currentKey) { setShowSettings(true); return; }
+            const callGemini = async (base64, type) => {
+                if (!apiKey) { setShowSettings(true); return; }
 
                 setStatus('processing');
                 setDebugMsg("");
 
-                // 鎖定端點：v1beta 是目前對圖片與結構化回傳支援度最廣的版本
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
                 
-                const prompt = `請分析此圖內容。
-                1. 菜單：翻譯品名與阿拉伯數字價格。
-                2. 商品：提供品牌、名稱、建議售價、優點、缺點、社群摘要。
-                請「僅」回傳一個 JSON 物件，不要有任何 Markdown 標記，範例：{"type":"menu","title":"名稱","sections":[{"category":"類別","items":[{"name":"品名","price":"數字"}]}]} 或 {"type":"product","brand":"品牌","name":"名稱","userFeedback":{"pros":[],"cons":[]},"marketReview":"摘要"}`;
+                const prompt = `你是一個旅遊助理。請分析這張圖片：
+                1. 若是菜單：翻譯品名與價格。
+                2. 若是商品：提供品牌、名稱、優缺點、社群評價。
+                請嚴格僅回傳 JSON 物件，格式如下：
+                {"type":"menu","title":"名稱","sections":[{"category":"類別","items":[{"name":"品名","price":"價格"}]}]} 
+                或 {"type":"product","brand":"品牌","name":"名稱","userFeedback":{"pros":[],"cons":[]},"marketReview":"摘要"}`;
 
                 try {
                     const response = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64 } }] }]
-                            // 這裡不使用 responseMimeType，以避開 Unknown name 報錯
+                            contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: type, data: base64 } }] }]
                         })
                     });
 
                     const resJson = await response.json();
-                    if (!response.ok) {
-                        const msg = resJson.error?.message || "連線異常";
-                        if (msg.includes("expired")) throw new Error("金鑰已失效（Expired），請更換。");
-                        if (msg.includes("not found")) throw new Error("模型名稱不符或地區不支援。");
-                        throw new Error(msg);
-                    }
+                    if (!response.ok) throw new Error(resJson.error?.message || "連線異常");
 
                     const rawText = resJson.candidates[0].content.parts[0].text;
                     setData(robustParse(rawText));
@@ -116,9 +105,10 @@
                 const file = e.target.files[0];
                 if (file) {
                     const reader = new FileReader();
+                    setMimeType(file.type); // 動態偵測圖片格式
                     reader.onloadend = () => {
                         setImage(reader.result);
-                        callGemini(reader.result.split(',')[1]);
+                        callGemini(reader.result.split(',')[1], file.type);
                     };
                     reader.readAsDataURL(file);
                 }
@@ -132,124 +122,110 @@
                         <button onClick={() => setShowSettings(true)} className="bg-white/40 p-2.5 rounded-2xl border border-white shadow-sm active:scale-90 transition-transform">
                             <Icon name="settings" className="w-5 h-5 text-[#9A8C98]" />
                         </button>
-                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase shadow-sm">
+                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase">
                             Travel Pilot AI
                         </div>
                     </header>
 
                     <main className="px-6 flex flex-col items-center justify-center min-h-[75vh]">
                         {status === 'idle' && (
-                            <div className="text-center space-y-12 animate-in fade-in duration-700 w-full max-w-sm">
+                            <div className="text-center space-y-12 fade-in w-full max-w-sm">
                                 <div className="space-y-3">
                                     <h1 className="text-4xl font-black tracking-tight flex items-center justify-center gap-2">
                                         <Icon name="sparkles" className="w-7 h-7 text-[#C9ADA7]" />
                                         旅遊領航員
-                                        <Icon name="sparkles" className="w-7 h-7 text-[#C9ADA7]" />
                                     </h1>
-                                    <p className="text-[#9A8C98] text-sm font-medium tracking-wide">拍下菜單或商品，AI 為您解密</p>
+                                    <p className="text-[#9A8C98] text-sm font-medium">拍照解讀菜單與商品</p>
                                 </div>
-                                <div onClick={() => apiKey ? fileInputRef.current.click() : setShowSettings(true)} className="flex flex-col items-center justify-center gap-6 p-10 rounded-[3rem] bg-white border-4 border-white shadow-xl cursor-pointer active:scale-[0.98] transition-all">
-                                    <div className="w-24 h-24 rounded-full bg-[#F2E9E4] flex items-center justify-center shadow-inner"><Icon name="camera" className="w-10 h-10 text-[#C9ADA7]" /></div>
-                                    <div className="bg-[#4A4E69] text-white px-10 py-4 rounded-2xl font-bold shadow-md uppercase tracking-widest text-xs">
-                                        {apiKey ? "拍照或選取影像" : "請點此設定密鑰"}
+                                <div onClick={() => apiKey ? fileInputRef.current.click() : setShowSettings(true)} className="flex flex-col items-center justify-center gap-6 p-10 rounded-[3rem] bg-white shadow-xl cursor-pointer active:scale-95 transition-all">
+                                    <div className="w-20 h-20 rounded-full bg-[#F2E9E4] flex items-center justify-center"><Icon name="camera" className="w-8 h-8 text-[#C9ADA7]" /></div>
+                                    <div className="bg-[#4A4E69] text-white px-8 py-3 rounded-xl font-bold text-xs tracking-widest uppercase">
+                                        {apiKey ? "開啟相機" : "設定密鑰"}
                                     </div>
                                 </div>
-                                {!apiKey && <p className="text-[10px] text-[#C9ADA7] font-bold animate-bounce">需設定 API Key 才能開啟相機</p>}
                             </div>
                         )}
 
                         {status === 'processing' && (
-                            <div className="flex flex-col items-center space-y-6 animate-pulse text-[#9A8C98]">
+                            <div className="flex flex-col items-center space-y-4">
                                 <Icon name="refresh-cw" className="w-10 h-10 animate-spin text-[#C9ADA7]" />
-                                <p className="text-sm font-bold tracking-[0.3em] uppercase">正在解讀影像中...</p>
+                                <p className="text-sm font-bold tracking-widest animate-pulse">AI 正在努力翻譯中...</p>
                             </div>
                         )}
 
                         {status === 'result' && data && (
-                            <div className="w-full max-w-md animate-in slide-in-from-bottom-8 duration-500 bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-white/50 px-8 pb-10">
-                                <div className="relative h-44 -mx-8 mb-8 overflow-hidden">
-                                    <img src={image} className="w-full h-full object-cover opacity-90" />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-white via-transparent to-transparent"></div>
-                                    <button onClick={resetApp} className="absolute top-4 right-4 bg-white/40 backdrop-blur-md text-white p-2 rounded-full shadow-sm"><Icon name="x" className="w-4 h-4" /></button>
+                            <div className="w-full max-w-md fade-in bg-white rounded-[2.5rem] shadow-2xl overflow-hidden px-8 pb-10">
+                                <div className="relative h-40 -mx-8 mb-6">
+                                    <img src={image} className="w-full h-full object-cover opacity-80" />
+                                    <div className="absolute inset-0 bg-gradient-to-t from-white to-transparent"></div>
                                 </div>
                                 
                                 {data.type === 'menu' ? (
-                                    <div className="space-y-6 text-[#4A4E69]">
-                                        <h2 className="text-2xl font-black text-center">{data.title}</h2>
+                                    <div className="space-y-4">
+                                        <h2 className="text-2xl font-black">{data.title}</h2>
                                         {data.sections?.map((s, i) => (
-                                            <div key={i} className="space-y-4">
-                                                <h4 className="text-[10px] font-black tracking-widest text-[#C9ADA7] uppercase border-b border-[#F2E9E4] pb-1">{s.category}</h4>
+                                            <div key={i} className="space-y-2">
+                                                <h4 className="text-[10px] font-bold text-[#C9ADA7] border-b pb-1 uppercase">{s.category}</h4>
                                                 {s.items?.map((item, j) => (
-                                                    <div key={j} className="flex justify-between items-start text-sm">
-                                                        <span className="font-bold">{item.name}</span><span className="text-[10px] font-black bg-[#F2E9E4] px-2.5 py-1 rounded-lg text-[#4A4E69]">{item.price}</span>
+                                                    <div key={j} className="flex justify-between text-sm">
+                                                        <span className="font-bold">{item.name}</span>
+                                                        <span className="bg-[#F2E9E4] px-2 py-0.5 rounded text-[10px]">{item.price}</span>
                                                     </div>
                                                 ))}
                                             </div>
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="space-y-6 text-center text-[#4A4E69]">
-                                        <div>
-                                            <p className="text-[10px] font-bold text-[#C9ADA7] tracking-widest uppercase">{data.brand}</p>
-                                            <h2 className="text-2xl font-black leading-tight">{data.name}</h2>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-3 text-left">
-                                            <div className="bg-[#F2E9E4]/40 p-4 rounded-2xl">
-                                                <Icon name="thumbs-up" className="w-4 h-4 text-[#C9ADA7] mb-2" />
-                                                <ul className="text-[10px] space-y-1 font-medium">{data.userFeedback?.pros?.map((p, k) => <li key={k}>• {p}</li>)}</ul>
+                                    <div className="space-y-4 text-center">
+                                        <p className="text-[10px] font-bold text-[#C9ADA7] uppercase">{data.brand}</p>
+                                        <h2 className="text-2xl font-black">{data.name}</h2>
+                                        <div className="grid grid-cols-2 gap-2 text-left">
+                                            <div className="bg-green-50 p-3 rounded-xl text-[10px]">
+                                                <Icon name="check-circle" className="w-3 h-3 text-green-500 mb-1" />
+                                                {data.userFeedback?.pros?.map((p, k) => <li className="list-none" key={k}>• {p}</li>)}
                                             </div>
-                                            <div className="bg-[#9A8C98]/10 p-4 rounded-2xl">
-                                                <Icon name="alert-circle" className="w-4 h-4 text-[#9A8C98] mb-2" />
-                                                <ul className="text-[10px] space-y-1 font-medium">{data.userFeedback?.cons?.map((c, l) => <li key={l}>• {c}</li>)}</ul>
+                                            <div className="bg-red-50 p-3 rounded-xl text-[10px]">
+                                                <Icon name="x-circle" className="w-3 h-3 text-red-400 mb-1" />
+                                                {data.userFeedback?.cons?.map((c, l) => <li className="list-none" key={l}>• {c}</li>)}
                                             </div>
                                         </div>
-                                        <div className="p-6 rounded-[2rem] border-2 border-[#F2E9E4] text-sm italic font-medium shadow-sm">「{data.marketReview}」</div>
                                     </div>
                                 )}
-                                <button onClick={resetApp} className="w-full mt-10 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">重新啟動辨識</button>
+                                <button onClick={resetApp} className="w-full mt-8 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg">返回</button>
                             </div>
                         )}
 
                         {status === 'error' && (
-                            <div className="bg-white p-10 rounded-[2.5rem] text-center space-y-6 shadow-xl border-red-50 max-w-xs animate-in zoom-in">
-                                <Icon name="frown" className="w-12 h-12 text-[#9A8C98] mx-auto" />
-                                <div className="space-y-2 text-[#4A4E69]">
-                                    <p className="text-sm font-bold text-red-400">連線異常</p>
-                                    <p className="text-[10px] opacity-70 leading-relaxed break-words font-mono">{debugMsg}</p>
-                                </div>
-                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95">更新或檢查 API Key</button>
+                            <div className="bg-white p-8 rounded-[2rem] text-center space-y-4 shadow-xl">
+                                <Icon name="alert-triangle" className="w-12 h-12 text-red-400 mx-auto" />
+                                <p className="text-xs font-mono text-red-500 break-all">{debugMsg}</p>
+                                <button onClick={() => setStatus('idle')} className="bg-[#4A4E69] text-white px-6 py-2 rounded-full text-xs">重試</button>
                             </div>
                         )}
                     </main>
 
                     {showSettings && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm animate-in fade-in">
-                            <div className="bg-white w-full max-w-xs p-8 rounded-[2.5rem] shadow-2xl space-y-6 text-center border border-white">
-                                <Icon name="key" className="w-10 h-10 text-[#C9ADA7] mx-auto" />
-                                <div className="space-y-2">
-                                    <h3 className="font-bold text-[#4A4E69]">設定導航金鑰</h3>
-                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請至 Google AI Studio 申請新金鑰<br/>(密鑰會安全地儲存於此裝置)</p>
-                                </div>
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
+                            <div className="bg-white w-full max-w-xs p-8 rounded-[2rem] space-y-4 text-center">
+                                <h3 className="font-bold">設定 API Key</h3>
                                 <input 
                                     type="password" 
-                                    defaultValue={apiKey}
-                                    placeholder="貼上 API Key..."
-                                    className="w-full bg-[#F2E9E4] border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-[#C9ADA7] outline-none shadow-inner"
+                                    placeholder="貼上你的 Gemini API Key"
+                                    className="w-full bg-gray-100 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-[#C9ADA7]"
                                     onBlur={(e) => saveApiKey(e.target.value)}
                                 />
-                                <button onClick={() => setShowSettings(false)} className="text-[10px] font-bold text-[#C9ADA7] uppercase tracking-widest pt-2 active:scale-90 transition-all">關閉視窗</button>
+                                <button onClick={() => setShowSettings(false)} className="text-xs text-gray-400 underline">關閉</button>
                             </div>
                         </div>
                     )}
 
                     <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
-                    <footer className="fixed bottom-0 w-full p-8 text-center opacity-30 text-[9px] font-bold uppercase tracking-[0.4em]">Global Vision Intelligence Pilot</footer>
                 </div>
             );
         }
 
-            const root = ReactDOM.createRoot(document.getElementById('root'));
-            root.render(<App />);
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>
