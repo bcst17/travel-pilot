@@ -11,7 +11,7 @@
     <meta name="apple-mobile-web-app-title" content="旅遊領航員">
     <link rel="apple-touch-icon" href="icon-192.png">
     
-    <!-- 載入核心庫 -->
+    <!-- 核心庫載入 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -29,9 +29,9 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // --- 您可以在此處填入您的 API Key ---
+        // --- 設定區：請確保此處為有效且未過期的 API Key ---
         const HARDCODED_API_KEY = "AIzaSyAInIslcOhhTE-IPBCprwSXEfERPz78j-s"; 
-        // ------------------------------------
+        // --------------------------------------------
 
         const Icon = ({ name, className = "w-6 h-6" }) => {
             useEffect(() => {
@@ -56,15 +56,18 @@
                 setShowSettings(false);
             };
 
-            // 採用純文字過濾法，避開所有 JSON 設定報錯
-            const parseData = (text) => {
+            // 最終穩定解析器：無視所有 Markdown 與雜訊
+            const robustParse = (text) => {
                 try {
-                    const start = text.indexOf('{');
-                    const end = text.lastIndexOf('}');
+                    // 移除可能的 Markdown 代碼塊標記
+                    const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
+                    const start = cleaned.indexOf('{');
+                    const end = cleaned.lastIndexOf('}');
                     if (start === -1 || end === -1) throw new Error();
-                    return JSON.parse(text.substring(start, end + 1));
+                    return JSON.parse(cleaned.substring(start, end + 1));
                 } catch (e) {
-                    throw new Error("影像內容較複雜，請再試一次或確保光線充足。");
+                    console.error("原始回傳內容：", text);
+                    throw new Error("影像內容解讀成功，但資料格式不符。請嘗試重新拍攝。");
                 }
             };
 
@@ -75,13 +78,15 @@
                 setStatus('processing');
                 setDebugMsg("");
 
-                // 鎖定全球最穩定端點與模型：v1 + gemini-1.5-flash
-                const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
+                // 鎖定端點：使用最穩定的 v1beta 與 gemini-1.5-flash
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${currentKey}`;
                 
                 const prompt = `請分析此圖內容。
-                1. 菜單：翻譯品名與阿拉伯數字價格。
+                1. 菜單：翻譯品名與價格（數字）。
                 2. 商品：提供品牌、名稱、建議售價、優點、缺點、社群摘要。
-                請僅回傳 JSON 物件，格式為: {"type":"menu","title":"名稱","sections":[{"category":"類別","items":[{"name":"品名","price":"數字"}]}]} 或 {"type":"product","brand":"品牌","name":"名稱","userFeedback":{"pros":[],"cons":[]},"marketReview":"摘要"}`;
+                請「僅」回傳 JSON 物件，範例格式如下，不要包含其他文字：
+                {"type":"menu","title":"名稱","sections":[{"category":"類別","items":[{"name":"品名","price":"$10"}]}]} 
+                或 {"type":"product","brand":"品牌","name":"名稱","userFeedback":{"pros":[],"cons":[]},"marketReview":"摘要"}`;
 
                 try {
                     const response = await fetch(url, {
@@ -89,14 +94,21 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64 } }] }]
+                            // 這裡不使用任何可能導致 Unknown name 錯誤的進階 config
                         })
                     });
 
                     const resJson = await response.json();
-                    if (!response.ok) throw new Error(resJson.error?.message || "API 連線失敗");
+                    if (!response.ok) {
+                        // 處理常見錯誤：Expired, Invalid, or Region Restricted
+                        const msg = resJson.error?.message || "連線異常";
+                        if (msg.includes("expired")) throw new Error("API 金鑰已過期，請更換。");
+                        if (msg.includes("not found")) throw new Error("找不到 AI 模型，請確認金鑰權限。");
+                        throw new Error(msg);
+                    }
 
                     const rawText = resJson.candidates[0].content.parts[0].text;
-                    setData(parseData(rawText));
+                    setData(robustParse(rawText));
                     setStatus('result');
                 } catch (error) {
                     setDebugMsg(error.message);
@@ -124,7 +136,7 @@
                         <button onClick={() => setShowSettings(true)} className="bg-white/40 p-2.5 rounded-2xl border border-white shadow-sm active:scale-90 transition-transform">
                             <Icon name="settings" className="w-5 h-5 text-[#9A8C98]" />
                         </button>
-                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase">
+                        <div className="bg-white/60 backdrop-blur-md border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase shadow-sm">
                             Travel Pilot AI
                         </div>
                     </header>
@@ -160,7 +172,7 @@
                             <div className="w-full max-w-md animate-in slide-in-from-bottom-8 duration-500 bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-white/50 px-8 pb-10">
                                 <div className="relative h-44 -mx-8 mb-8 overflow-hidden">
                                     <img src={image} className="w-full h-full object-cover opacity-90" />
-                                    <button onClick={resetApp} className="absolute top-4 right-4 bg-white/40 backdrop-blur-md text-white p-2 rounded-full"><Icon name="x" className="w-4 h-4" /></button>
+                                    <button onClick={resetApp} className="absolute top-4 right-4 bg-white/40 backdrop-blur-md text-white p-2 rounded-full shadow-sm"><Icon name="x" className="w-4 h-4" /></button>
                                 </div>
                                 
                                 {data.type === 'menu' ? (
@@ -190,7 +202,7 @@
                                         <div className="p-6 rounded-[2rem] border-2 border-[#F2E9E4] text-sm italic font-medium">「{data.marketReview}」</div>
                                     </div>
                                 )}
-                                <button onClick={resetApp} className="w-full mt-10 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">重新出發</button>
+                                <button onClick={resetApp} className="w-full mt-10 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg transition-transform active:scale-95">重新出發</button>
                             </div>
                         )}
 
@@ -201,7 +213,7 @@
                                     <p className="text-sm font-bold text-red-400">連線異常</p>
                                     <p className="text-[10px] opacity-70 leading-relaxed break-words font-mono">{debugMsg}</p>
                                 </div>
-                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md">更新或檢查 API Key</button>
+                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95">檢查或更新 API Key</button>
                             </div>
                         )}
                     </main>
