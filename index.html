@@ -5,17 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>旅遊領航員</title>
     
-    <!-- PWA 與 本地图示設定 -->
+    <!-- PWA 與 本地图示設定 (適用於 GitHub) -->
     <link rel="manifest" href="manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="旅遊領航員">
     
-    <!-- 使用 GitHub 內的本地檔案 -->
+    <!-- 優先讀取 GitHub 根目錄的圖示 -->
     <link rel="apple-touch-icon" href="icon-192.png">
     <link rel="icon" type="image/png" href="icon-192.png">
     
-    <!-- 載入核心庫 -->
+    <!-- 備用方案：如果上面抓不到，強制指定外部連結 -->
+    <link rel="apple-touch-icon-precomposed" href="https://lh3.googleusercontent.com/d/16bSYzED5nmnogW-i-H791nmkvkPyhJwt">
+    
+    <!-- 載入必要零件 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -34,12 +37,19 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // 圖示組件
+        // 統一圖示組件 (修正 ShoppingBag 未定義問題)
         const Icon = ({ name, className = "w-6 h-6" }) => {
             useEffect(() => {
                 if (window.lucide) window.lucide.createIcons();
             }, [name]);
             return <i data-lucide={name} className={className}></i>;
+        };
+
+        // 價格格式化：加上千分位逗號
+        const formatNumber = (val) => {
+            if (!val) return "";
+            const num = Number(val.toString().replace(/,/g, ''));
+            return isNaN(num) ? val : num.toLocaleString('en-US');
         };
 
         function App() {
@@ -51,43 +61,36 @@
             const [showSettings, setShowSettings] = useState(false);
             const fileInputRef = useRef(null);
 
-            // 手動保存金鑰至本地瀏覽器
-            const handleSaveKey = (key) => {
-                const trimmedKey = key.trim();
-                setApiKey(trimmedKey);
-                localStorage.setItem('gemini_travel_key', trimmedKey);
+            const saveApiKey = (key) => {
+                const k = key.trim();
+                setApiKey(k);
+                localStorage.setItem('gemini_travel_key', k);
                 setShowSettings(false);
             };
 
-            // 最終穩定解析器：從 AI 文字中強力抓取資料物件
-            const extractJson = (text) => {
+            const robustParse = (text) => {
                 try {
-                    // 清除 Markdown 標籤與首尾空白
-                    const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
-                    const match = cleaned.match(/\{[\s\S]*\}/);
-                    if (!match) throw new Error();
-                    return JSON.parse(match[0]);
+                    const jsonMatch = text.match(/\{[\s\S]*\}/);
+                    if (!jsonMatch) throw new Error();
+                    return JSON.parse(jsonMatch[0]);
                 } catch (e) {
-                    console.error("AI 原文回傳:", text);
-                    throw new Error("影像解讀成功，但資料格式轉換失敗，請再拍一次。");
+                    throw new Error("格式轉換失敗，請確保拍攝角度正確。");
                 }
             };
 
             const callGemini = async (base64) => {
-                if (!apiKey) {
-                    setShowSettings(true);
-                    return;
-                }
-
+                if (!apiKey) { setShowSettings(true); return; }
                 setStatus('processing');
                 setErrorMsg("");
 
-                // 修正：使用 v1beta 與標準模型名稱，移除所有可能報錯的 config
+                // 使用最穩定的模型名稱
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
                 
-                const prompt = `分析此圖內容。請僅回傳 JSON 物件。
-                1. 菜單：翻譯品名與價格（數字）。格式範例：{"type":"menu", "title":"名稱", "sections":[{"category":"類別", "items":[{"name":"品名","price":"$10"}]}]}
-                2. 商品：提供品牌、名稱、售價、優點、缺點、社群摘要。格式範例：{"type":"product", "brand":"品牌", "name":"名稱", "userFeedback":{"pros":[],"cons":[]}, "marketReview":"摘要"}`;
+                const prompt = `分析此圖。
+                1. 御神籤：辨識吉凶、籤號、內容翻譯、各項運勢建議。類型 type: "omikuji"。
+                2. 菜單：翻譯品名與價格(數字)。類型 type: "menu"。
+                3. 商品：品牌、名、當地網購平均售價區間、1-5星社群推薦指數(參考PTT/Dcard/X)、特色優缺點。類型 type: "product"。
+                請僅回傳 JSON。`;
 
                 try {
                     const response = await fetch(url, {
@@ -95,19 +98,14 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64 } }] }]
-                            // 不再傳送 generationConfig，避開 Unknown name 報錯
                         })
                     });
 
                     const resJson = await response.json();
-                    if (!response.ok) {
-                        const msg = resJson.error?.message || "連線異常";
-                        if (msg.includes("models/")) throw new Error("此 API 金鑰暫時無法訪問該模型，請確認地區支援。");
-                        throw new Error(msg);
-                    }
+                    if (!response.ok) throw new Error(resJson.error?.message || "API 連線異常");
 
                     const rawText = resJson.candidates[0].content.parts[0].text;
-                    setData(extractJson(rawText));
+                    setData(robustParse(rawText));
                     setStatus('result');
                 } catch (error) {
                     setErrorMsg(error.message);
@@ -127,19 +125,15 @@
                 }
             };
 
-            const resetApp = () => { setImage(null); setStatus('idle'); setData(null); setErrorMsg(""); };
+            const reset = () => { setImage(null); setStatus('idle'); setData(null); setErrorMsg(""); };
 
             return (
                 <div className="min-h-screen bg-[#F2E9E4] text-[#4A4E69] pb-12 transition-all">
-                    {/* Header */}
                     <header className="p-6 flex justify-between items-center">
-                        <button 
-                            onClick={() => setShowSettings(true)}
-                            className="bg-white/40 p-2.5 rounded-2xl border border-white shadow-sm active:scale-90 transition-transform"
-                        >
+                        <button onClick={() => setShowSettings(true)} className="bg-white/40 p-2.5 rounded-2xl border border-white shadow-sm active:scale-90 transition-transform">
                             <Icon name="settings" className="w-5 h-5 text-[#9A8C98]" />
                         </button>
-                        <div className="bg-white/60 border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase">
+                        <div className="bg-white/60 border border-[#C9ADA7]/30 rounded-full px-5 py-1.5 text-[10px] font-bold text-[#9A8C98] tracking-widest uppercase shadow-sm">
                             Travel Pilot AI
                         </div>
                     </header>
@@ -153,12 +147,12 @@
                                         旅遊領航員
                                         <Icon name="sparkles" className="w-8 h-8 text-[#C9ADA7]" />
                                     </h1>
-                                    <p className="text-[#9A8C98] text-sm font-medium tracking-wide">隨手拍下未知，由 AI 為您即時導讀</p>
+                                    <p className="text-[#9A8C98] text-sm font-medium tracking-wide">拍下未知，由 AI 為您即時導讀</p>
                                 </div>
-                                <div onClick={() => apiKey ? fileInputRef.current?.click() : setShowSettings(true)} className="flex flex-col items-center justify-center gap-6 p-10 rounded-[3rem] bg-white border-4 border-white shadow-xl cursor-pointer active:scale-95 transition-all">
+                                <div onClick={() => apiKey ? fileInputRef.current.click() : setShowSettings(true)} className="flex flex-col items-center justify-center gap-6 p-10 rounded-[3rem] bg-white border-4 border-white shadow-xl cursor-pointer active:scale-95 transition-all">
                                     <div className="w-24 h-24 rounded-full bg-[#F2E9E4] flex items-center justify-center shadow-inner"><Icon name="camera" className="w-10 h-10 text-[#C9ADA7]" /></div>
                                     <div className="bg-[#4A4E69] text-white px-10 py-4 rounded-2xl font-bold shadow-md uppercase tracking-widest text-sm">
-                                        {apiKey ? "啟動相機辨識" : "請點此設定金鑰"}
+                                        {apiKey ? "啟動相機辨識" : "請先點此設定密鑰"}
                                     </div>
                                 </div>
                             </div>
@@ -166,8 +160,8 @@
 
                         {status === 'processing' && (
                             <div className="flex flex-col items-center space-y-6 animate-pulse text-[#9A8C98]">
-                                <Icon name="refresh-cw" className="w-12 h-12 animate-spin text-[#C9ADA7]" />
-                                <p className="text-sm font-bold tracking-[0.3em] uppercase text-center leading-relaxed">正在探索目標中...<br/>這可能需要幾秒鐘</p>
+                                <Icon name="refresh-cw" className="w-10 h-10 animate-spin text-[#C9ADA7]" />
+                                <p className="text-sm font-bold tracking-[0.3em] uppercase">正在解讀影像中...</p>
                             </div>
                         )}
 
@@ -175,9 +169,31 @@
                             <div className="w-full max-w-md animate-in slide-in-from-bottom-8 duration-500 bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-white/50 px-8 pb-10">
                                 <div className="relative h-44 -mx-8 mb-8 overflow-hidden">
                                     <img src={image} className="w-full h-full object-cover opacity-90" />
-                                    <button onClick={resetApp} className="absolute top-4 right-4 bg-white/40 backdrop-blur-md text-white p-2 rounded-full shadow-sm"><Icon name="x" className="w-4 h-4" /></button>
+                                    <button onClick={reset} className="absolute top-4 right-4 bg-white/40 backdrop-blur-md text-white p-2 rounded-full shadow-sm"><Icon name="x" className="w-4 h-4" /></button>
                                 </div>
-                                {data.type === 'menu' ? (
+                                
+                                {data.type === 'omikuji' ? (
+                                    <div className="space-y-6">
+                                        <div className="text-center space-y-2">
+                                            <div className="inline-flex items-center space-x-2 bg-[#9A8C98]/10 px-4 py-1 rounded-full border border-[#9A8C98]/20">
+                                                <Icon name="shrine" className="w-3 h-3 text-[#9A8C98]" />
+                                                <span className="text-[10px] font-black text-[#9A8C98] tracking-widest uppercase">Omikuji Insight</span>
+                                            </div>
+                                            <h2 className="text-4xl font-black text-[#4A4E69] tracking-[0.2em]">{data.luck}</h2>
+                                        </div>
+                                        <div className="bg-[#F2E9E4]/40 p-5 rounded-3xl border border-white text-sm font-medium leading-relaxed italic text-center">
+                                            「{data.content}」
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-2">
+                                            {data.advice?.map((a, i) => (
+                                                <div key={i} className="flex bg-white p-3 rounded-xl border border-[#F2E9E4] shadow-sm">
+                                                    <span className="text-[10px] font-black text-[#C9ADA7] border-r pr-3 mr-3 shrink-0 uppercase">{a.category}</span>
+                                                    <span className="text-xs font-medium text-[#4A4E69]">{a.text}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : data.type === 'menu' ? (
                                     <div className="space-y-6 text-[#4A4E69]">
                                         <h2 className="text-2xl font-black text-center">{data.title}</h2>
                                         {data.sections?.map((s, i) => (
@@ -185,7 +201,7 @@
                                                 <h4 className="text-[10px] font-black tracking-widest text-[#C9ADA7] uppercase border-b border-[#F2E9E4] pb-1">{s.category}</h4>
                                                 {s.items?.map((item, j) => (
                                                     <div key={j} className="flex justify-between items-start text-sm">
-                                                        <span className="font-bold">{item.name}</span><span className="text-[10px] font-black bg-[#F2E9E4] px-2.5 py-1 rounded-lg">{item.price}</span>
+                                                        <span className="font-bold">{item.name}</span><span className="text-[10px] font-black bg-[#F2E9E4] px-2.5 py-1 rounded-lg">{formatNumber(item.price)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -197,14 +213,33 @@
                                             <p className="text-[10px] font-bold text-[#C9ADA7] tracking-widest uppercase">{data.brand}</p>
                                             <h2 className="text-2xl font-black leading-tight">{data.name}</h2>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-3 text-left">
-                                            <div className="bg-[#F2E9E4]/40 p-4 rounded-2xl"><Icon name="thumbs-up" className="w-4 h-4 text-[#C9ADA7] mb-2" /><ul className="text-[10px] space-y-1 font-medium">{data.userFeedback?.pros?.map((p, k) => <li key={k}>• {p}</li>)}</ul></div>
-                                            <div className="bg-[#9A8C98]/10 p-4 rounded-2xl"><Icon name="alert-circle" className="w-4 h-4 text-[#9A8C98] mb-2" /><ul className="text-[10px] space-y-1 font-medium">{data.userFeedback?.cons?.map((c, l) => <li key={l}>• {c}</li>)}</ul></div>
+                                        <div className="grid grid-cols-1 gap-3 text-left">
+                                            <div className="flex items-center justify-between bg-[#F2E9E4]/60 p-4 rounded-3xl border border-white shadow-sm">
+                                                <div className="flex items-center space-x-3">
+                                                    <div className="bg-white p-2 rounded-xl shadow-inner"><Icon name="star" className="w-4 h-4 text-[#C9ADA7] fill-[#C9ADA7]" /></div>
+                                                    <div className="space-y-0.5">
+                                                        <p className="text-[10px] font-black text-[#C9ADA7] uppercase tracking-widest">社群推薦指數</p>
+                                                        <div className="flex space-x-0.5">
+                                                            {[...Array(5)].map((_, i) => (
+                                                                <Icon key={i} name="star" className={`w-3 h-3 ${i < (data.rating || 0) ? 'text-[#C9ADA7] fill-[#C9ADA7]' : 'text-[#C9ADA7]/20'}`} />
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <span className="text-[10px] font-black text-[#9A8C98]">PTT/Dcard/X</span>
+                                            </div>
+                                            <div className="flex items-start space-x-4 bg-[#F2E9E4]/40 p-5 rounded-3xl border-2 border-white shadow-md">
+                                                <div className="bg-white p-2.5 rounded-2xl shadow-inner"><Icon name="tag" className="w-5 h-5 text-[#C9ADA7]" /></div>
+                                                <div className="space-y-1">
+                                                    <p className="text-[10px] font-black text-[#C9ADA7] uppercase tracking-widest">當地網購平均售價區間</p>
+                                                    <p className="text-lg font-black text-[#4A4E69]">{data.priceRange}</p>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="p-6 rounded-[2rem] border-2 border-[#F2E9E4] text-sm italic font-medium shadow-sm">「{data.marketReview}」</div>
+                                        <div className="p-6 rounded-[2rem] border-2 border-[#F2E9E4] shadow-sm italic text-sm text-center">「{data.marketReview}」</div>
                                     </div>
                                 )}
-                                <button onClick={resetApp} className="w-full mt-10 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg">重新出發</button>
+                                <button onClick={reset} className="w-full mt-10 bg-[#4A4E69] text-white py-4 rounded-2xl font-bold shadow-lg active:scale-95 transition-all">重新辨識</button>
                             </div>
                         )}
 
@@ -212,44 +247,34 @@
                             <div className="bg-white p-10 rounded-[2.5rem] text-center space-y-6 shadow-xl border border-red-50 max-w-xs animate-in zoom-in">
                                 <Icon name="frown" className="w-12 h-12 text-[#9A8C98] mx-auto" />
                                 <div className="space-y-2 text-[#4A4E69]">
-                                    <p className="text-sm font-bold text-red-400">重試建議</p>
-                                    <p className="text-[10px] opacity-70 leading-relaxed break-words font-mono">
-                                        錯誤資訊：{errorMsg}
-                                    </p>
+                                    <p className="text-sm font-bold text-red-400">連線異常</p>
+                                    <p className="text-[10px] opacity-70 leading-relaxed break-words font-mono">{errorMsg}</p>
                                 </div>
-                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95">檢查或更換 API Key</button>
+                                <button onClick={() => {setShowSettings(true); setStatus('idle');}} className="bg-[#4A4E69] text-white px-8 py-3 rounded-full font-bold w-full shadow-md transition-all active:scale-95">檢查或更新 API Key</button>
                             </div>
                         )}
                     </main>
 
-                    {/* 設定彈窗 */}
                     {showSettings && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/30 backdrop-blur-sm animate-in fade-in duration-300">
-                            <div className="bg-white w-full max-w-xs p-8 rounded-[2.5rem] shadow-2xl space-y-6 text-center">
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40 backdrop-blur-sm animate-in fade-in">
+                            <div className="bg-white w-full max-w-xs p-8 rounded-[2.5rem] shadow-2xl space-y-6 text-center border border-white">
                                 <Icon name="key" className="w-10 h-10 text-[#C9ADA7] mx-auto" />
                                 <div className="space-y-2">
                                     <h3 className="font-bold text-[#4A4E69]">設定導航密鑰</h3>
-                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請至 Google AI Studio 申請密鑰<br/>密鑰會安全地儲存於您的瀏覽器中</p>
+                                    <p className="text-[10px] text-[#9A8C98] leading-relaxed">請至 Google AI Studio 申請新密鑰<br/>密鑰僅會儲存於您的瀏覽器中</p>
                                 </div>
                                 <input 
                                     type="password" 
                                     defaultValue={apiKey}
                                     placeholder="貼上 API Key..."
                                     className="w-full bg-[#F2E9E4] border-none rounded-2xl p-4 text-sm focus:ring-2 focus:ring-[#C9ADA7] outline-none shadow-inner"
-                                    onBlur={(e) => handleSaveKey(e.target.value)}
+                                    onBlur={(e) => saveApiKey(e.target.value)}
                                 />
-                                <button 
-                                    onClick={() => setShowSettings(false)}
-                                    className="text-[10px] font-bold text-[#C9ADA7] uppercase tracking-widest pt-2 active:scale-90 transition-transform"
-                                >
-                                    返回導航
-                                </button>
+                                <button onClick={() => setShowSettings(false)} className="text-[10px] font-bold text-[#C9ADA7] uppercase tracking-widest pt-2 active:scale-90 transition-all">關閉視窗</button>
                             </div>
                         </div>
                     )}
-
                     <input type="file" ref={fileInputRef} onChange={handleUpload} accept="image/*" className="hidden" />
-                    <footer className="fixed bottom-0 w-full p-8 text-center opacity-30 text-[9px] font-bold uppercase tracking-[0.4em]">Global Vision Intelligence Pilot</footer>
                 </div>
             );
         }
